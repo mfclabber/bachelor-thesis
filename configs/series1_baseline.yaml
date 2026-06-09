@@ -1,0 +1,29 @@
+# Серия 1: baseline девяти VLA на LIBERO (без RL)
+series: 1
+description: "Baseline VLA на LIBERO"
+
+models:
+  - openvla_oft
+  - univla
+  - pi0
+  - cogact
+  - smolvla
+  - pi0_fast
+  - spatialvla
+  - octo_small
+  - rt1x
+
+suites:
+  - libero_object
+  - libero_spatial
+  - libero_goal
+  - libero_long
+
+protocol:
+  episodes_per_task: 10
+  tasks_per_suite: 10
+  seeds: [7, 13, 42]
+  resolution: 224
+  greedy: true
+
+out_csv: results/libero/baseline_sr.csv

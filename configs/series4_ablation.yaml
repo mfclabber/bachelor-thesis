@@ -1,0 +1,31 @@
+# Серия 4: абляция компонентов residual RL (на OpenVLA-OFT)
+series: 4
+description: "Вклад компонентов системы"
+
+model: openvla_oft
+suite: libero_long
+mode: residual_sac
+
+total_steps: 300000
+seed: 42
+buffer_size: 1000000
+batch_size: 256
+learning_rate: 3.0e-4
+tau: 0.005
+residual_scale: 0.1
+horizon: 220
+
+# Варианты абляции (переопределяются из CLI):
+#   full              — полная система (residual SAC + stage)
+#   no_stage          — без стадийного вознаграждения (sparse reward)
+#   unfrozen          — mode=direct_sac (разморозка VLA)
+#   ppo               — mode=stare_ppo
+#   budget_150k       — total_steps=150000
+ablation: full
+
+stage_reward:
+  reach_threshold: 0.05
+  transport_threshold: 0.15
+  weights: [0.25, 0.25, 0.25, 0.25]
+  success_bonus: 1.0
+  monotonic: true

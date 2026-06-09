@@ -1,0 +1,25 @@
+# Серия 3: residual SAC + стадийная награда для всех девяти VLA
+series: 3
+description: "RL всех VLA лучшей схемой"
+
+# Перебор: -m model=openvla_oft,univla,pi0,cogact,smolvla,pi0_fast,spatialvla,octo_small,rt1x \
+#             suite=libero_object,libero_spatial,libero_goal,libero_long seed=7,13,42
+model: openvla_oft
+suite: libero_object
+mode: residual_sac
+
+total_steps: 300000
+seed: 42
+buffer_size: 1000000
+batch_size: 256
+learning_rate: 3.0e-4
+tau: 0.005
+residual_scale: 0.1
+horizon: 220
+
+stage_reward:
+  reach_threshold: 0.05
+  transport_threshold: 0.15
+  weights: [0.25, 0.25, 0.25, 0.25]
+  success_bonus: 1.0
+  monotonic: true

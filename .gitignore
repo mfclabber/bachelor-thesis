@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Hydra / experiment outputs
+outputs/
+multirun/
+wandb/
+
+# Results artifacts (keep folder structure, ignore large files)
+results/**/*.pt
+results/**/*.ckpt
+results/**/*.zip
+results/**/*.mp4
+results/**/*.png
+!results/**/.gitkeep
+
+# Model weights / caches
+*.bin
+*.safetensors
+.cache/
+
+# OS
+.DS_Store
