@@ -1,0 +1,224 @@
+\documentclass[a4paper,14pt,oneside,openany]{memoir}
+
+%%% Задаем поля, отступы и межстрочный интервал %%%
+
+\usepackage[left=30mm, right=15mm, top=20mm, bottom=20mm]{geometry}
+\pagestyle{plain}
+\parindent=1.25cm
+\usepackage{indentfirst}
+
+%%% Задаем языковые параметры и шрифт %%%
+
+\usepackage{iftex}
+\ifluatex
+    \usepackage{fontspec}
+    \defaultfontfeatures{Ligatures=TeX}
+    \setmainfont{Times New Roman}
+    \setsansfont{Arial}
+    \setmonofont{Courier New}
+\fi
+\usepackage[english, russian]{babel}
+
+%%% Задаем стиль заголовков и подзаголовков в тексте %%%
+
+\setsecnumdepth{subsection}
+\renewcommand*{\chapterheadstart}{}
+\renewcommand*{\printchaptername}{}
+\renewcommand*{\chapnumfont}{\normalfont\bfseries}
+\renewcommand*{\afterchapternum}{\hspace{1em}}
+\renewcommand*{\printchaptertitle}{\normalfont\bfseries\centering\MakeUppercase}
+\setbeforesecskip{20pt}
+\setaftersecskip{20pt}
+\setsecheadstyle{\raggedright\normalfont\bfseries}
+\setbeforesubsecskip{20pt}
+\setaftersubsecskip{20pt}
+\setsubsecheadstyle{\raggedright\normalfont\bfseries}
+
+%%% Задаем параметры оглавления %%%
+
+\addto\captionsrussian{\renewcommand\contentsname{Содержание}}
+\setrmarg{2.55em plus1fil}
+\renewcommand{\aftertoctitle}{\afterchaptertitle \vspace{-\cftbeforechapterskip}}
+\renewcommand*{\cftchapternumwidth}{1.5em}
+\renewcommand*{\cftchapterfont}{\normalfont\MakeUppercase}
+\renewcommand*{\cftchapterpagefont}{\normalfont}
+\renewcommand*{\cftchapterdotsep}{\cftdotsep}
+\renewcommand*{\cftdotsep}{1}
+\renewcommand*{\cftchapterleader}{\cftdotfill{\cftchapterdotsep}}
+\maxtocdepth{subsection}
+
+%%% Выравнивание и переносы %%%
+
+\tolerance 1414
+\hbadness 1414
+\emergencystretch 1.5em
+\hfuzz 0.3pt
+\vfuzz \hfuzz
+\clubpenalty=10000
+\widowpenalty=10000
+\brokenpenalty=4991
+
+%%% Буквы для перечислений по ГОСТ %%%
+
+\makeatletter
+    \def\russian@Alph#1{\ifcase#1\or
+       А\or Б\or В\or Г\or Д\or Е\or Ж\or
+       И\or К\or Л\or М\or Н\or
+       П\or Р\or С\or Т\or У\or Ф\or Х\or
+       Ц\or Ш\or Щ\or Э\or Ю\or Я\else\xpg@ill@value{#1}{russian@Alph}\fi}
+    \def\russian@alph#1{\ifcase#1\or
+       а\or б\or в\or г\or д\or е\or ж\or
+       и\or к\or л\or м\or н\or
+       п\or р\or с\or т\or у\or ф\or х\or
+       ц\or ш\or щ\or э\or ю\or я\else\xpg@ill@value{#1}{russian@alph}\fi}
+\makeatother
+
+%%% Задаем параметры оформления рисунков и таблиц %%%
+
+\usepackage{graphicx, caption, subcaption}
+\graphicspath{{images/}}
+\captionsetup[figure]{font=small, width=\textwidth, name=Рисунок, justification=centering}
+\captionsetup[subfigure]{font=small}
+\captionsetup[table]{singlelinecheck=false,font=small,width=\textwidth,justification=justified}
+\captiondelim{ -- }
+\setkeys{Gin}{width=\textwidth}
+\renewcommand{\thesubfigure}{\asbuk{subfigure}}
+\usepackage[section]{placeins}
+
+%%% Задаем параметры ссылок и гиперссылок %%%
+
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linktoc=all,
+    linktocpage=true,
+    linkcolor=red,
+    citecolor=red
+}
+
+%%% Настраиваем отображение списков %%%
+
+\usepackage{enumitem}
+\renewcommand*{\labelitemi}{\normalfont{--}}
+\makeatletter
+    \AddEnumerateCounter{\asbuk}{\russian@alph}
+\makeatother
+\renewcommand{\labelenumii}{\asbuk{enumii})}
+\renewcommand{\labelenumiii}{\arabic{enumiii})}
+\setlist{noitemsep, leftmargin=*}
+\setlist[1]{labelindent=\parindent}
+\setlist[2]{leftmargin=\parindent}
+\setlist[3]{leftmargin=\parindent}
+
+%%% Счетчики для нумерации объектов %%%
+
+\counterwithout{figure}{chapter}
+\counterwithout{equation}{chapter}
+\counterwithout{table}{chapter}
+
+%%% Реализация библиографии %%%
+
+\usepackage{csquotes}
+\usepackage[%
+backend=biber,
+bibencoding=utf8,
+sorting=none,
+style=gost-numeric,
+language=auto,
+autolang=other,
+sortcites=true,
+movenames=false,
+maxnames=5,
+minnames=3,
+doi=false,
+isbn=false,
+]{biblatex}[2016/09/17]
+\DeclareDelimFormat{bibinitdelim}{}
+\addbibresource{biba.bib}
+\defbibheading{bibliography}[\bibname]{\chapter*{#1}\addcontentsline{toc}{chapter}{#1}}
+
+\DeclareSourcemap{
+  \maps[datatype=bibtex]{
+    \map{
+        \step[fieldsource=title, match=\regexp{^\P{Cyrillic}*\p{Cyrillic}.*}, final]
+        \step[fieldset=langid, fieldvalue={russian}]
+    }
+    \map{
+        \step[fieldset=langid, fieldvalue={english}]
+    }
+  }
+}
+
+%%% Прочие пакеты %%%
+
+\usepackage{longtable,ltcaption}
+\usepackage{tabularx}
+\usepackage{adjustbox}
+\usepackage{multirow,makecell}
+\usepackage{booktabs}
+\usepackage{soulutf8}
+\usepackage{icomma}
+\usepackage{hyphenat}
+\usepackage{textcomp}
+\usepackage[version=4]{mhchem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage{siunitx}
+\sisetup{output-decimal-marker={,}, group-separator={\,}}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, shapes.geometric, calc}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{fillbetween}
+\pgfplotsset{
+  thesisplot/.style={
+    width=0.92\textwidth, height=6.4cm,
+    grid=major,
+    grid style={gray!22, dashed},
+    tick align=outside,
+    tick style={gray!55},
+    axis line style={gray!60},
+    label style={font=\small},
+    tick label style={font=\footnotesize},
+    title style={font=\small\bfseries},
+    legend style={font=\footnotesize, draw=gray!40, fill=white,
+                  fill opacity=0.9, text opacity=1, rounded corners=1pt},
+    legend cell align=left,
+    every axis plot/.append style={line width=1pt},
+  },
+}
+\usepackage{lastpage}
+\usepackage{totcount}
+\regtotcounter{figure}
+\regtotcounter{table}
+\newtotcounter{bibcnt}
+\AtEveryBibitem{\stepcounter{bibcnt}}
+\newcommand{\printbibcount}{\arabic{bibcnt}}
+
+%%% Вставляем по очереди все содержательные части документа %%%
+
+\begin{document}
+
+% \input{1_title}
+
+% \input{0_annotation}
+
+\setcounter{page}{6}
+\OnehalfSpacing*
+
+\tableofcontents*
+
+\input{8_abbreviations}
+
+\input{2_intro}
+\input{3_chap1}
+\input{4_chap2}
+\input{5_chap3}
+\input{6_conclusion}
+
+\printbibliography[title=Список использованных источников]
+
+\input{7_appendix}
+
+\end{document}

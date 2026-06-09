@@ -1,0 +1,250 @@
+\chapter{Постановка задачи и методология}
+\label{ch:chap2}
+
+\section{Постановка задачи}
+\label{sec:problem}
+
+    На основании проведённого аналитического обзора сформулирована следующая задача. Дано: множество манипуляционных задач $\mathcal{T} = \{T_1, T_2, \ldots, T_N\}$, каждая из которых задана текстовой инструкцией на естественном языке $l_i$ и определена в симуляционной среде с визуальными наблюдениями $o_t \in \mathcal{O}$ и пространством действий $a_t \in \mathcal{A}$. Для каждой задачи определён критерий успешного выполнения $S(T_i)$ -- бинарная метрика, принимающая значение 1, если задача выполнена корректно.
+
+    Основная метрика -- success rate (доля успешно выполненных задач):
+\begin{equation}
+\label{eq:success_rate}
+    \text{SR} = \frac{1}{N} \sum_{i=1}^{N} S(T_i).
+\end{equation}
+
+    Текущие VLA-модели, обученные через имитационное обучение, достигают $\text{SR} \approx 0{,}7$--$0{,}8$ в реальных условиях. Требуется исследовать, какие методы RL и схемы интеграции с VLM/VLA позволяют повысить SR до уровня $\geq 0{,}95$ на стандартных бенчмарках.
+
+    Формально рассмотрим задачу обучения с подкреплением как марковский процесс принятия решений (MDP): $\mathcal{M} = (\mathcal{S}, \mathcal{A}, P, R, \gamma)$, где $\mathcal{S}$ -- пространство состояний (визуальные наблюдения + проприоцепция), $\mathcal{A}$ -- пространство действий (управляющие команды робота), $P(s'|s, a)$ -- функция переходов (динамика среды), $R(s, a)$ -- функция вознаграждения, $\gamma \in (0, 1]$ -- коэффициент дисконтирования.
+
+    Цель RL-агента -- найти политику $\pi^*(a|s)$, максимизирующую ожидаемый кумулятивный дисконтированный доход:
+\begin{equation}
+\label{eq:rl_objective}
+    \pi^* = \arg\max_\pi \; \mathbb{E}_\pi \left[ \sum_{t=0}^{H} \gamma^t R(s_t, a_t) \right].
+\end{equation}
+
+    Рассматриваются два варианта постановки, соответствующие двум основным направлениям интеграции.
+
+    В первом варианте (VLM-генерация вознаграждений) функция $R(s, a)$ не задана заранее, а генерируется с помощью VLM на основе текстовой инструкции $l$ и визуальных наблюдений:
+\begin{equation}
+\label{eq:vlm_reward}
+    R_{\text{VLM}}(s_t, a_t) = f_{\text{VLM}}(o_t, o_{t+1}, l),
+\end{equation}
+где $f_{\text{VLM}}$ -- либо исполняемый код, сгенерированный языковой моделью (подход EUREKA/Text2Reward), либо скалярная оценка, полученная из парного сравнения наблюдений (подход RL-VLM-F).
+
+    Во втором варианте (RL-дообучение VLA) дана предобученная VLA-политика $\pi_{\text{VLA}}(a|o, l)$, и требуется найти улучшенную политику $\pi^*$ через RL. В схеме residual RL итоговая политика представляется как:
+\begin{equation}
+\label{eq:residual}
+    \pi^*(a|s) = \pi_{\text{VLA}}(a|o, l) + \Delta\pi_{\text{RL}}(a|s),
+\end{equation}
+где $\Delta\pi_{\text{RL}}$ -- лёгкая residual-политика, обучаемая через RL при замороженной VLA.
+
+\section{Обоснование выбора подхода}
+\label{sec:approach}
+
+    На основании обзора рассматриваются два практических трека реализации, различающиеся требованиями к данным и вычислительным ресурсам:
+    \begin{enumerate}
+        \item \textbf{VLM $\rightarrow$ награда $\rightarrow$ RL}: визуально-языковая модель используется для получения сигнала вознаграждения, после чего политика обучается стандартным RL.
+        \item \textbf{RL-дообучение VLA}: дообучение предобученной VLA-политики за счёт RL (в том числе residual RL и стадийных/предпочтительных наград).
+    \end{enumerate}
+
+    Сопоставление треков по ключевым ресурсным факторам приведено ниже.
+    \begin{enumerate}
+        \item \textbf{Вычислительные ресурсы}: RL-дообучение VLA предполагает наличие (и хранение в памяти) крупной VLA-модели (порядка 7--55B параметров), что делает воспроизведение в академических условиях существенно более дорогим. В треке генерации награды VLM может быть выбран существенно меньше, а обучаемая политика RL остаётся компактной.
+        \item \textbf{Требования к данным}: RL-дообучение VLA опирается на доступ к демонстрациям и/или существующей VLA, тогда как генерация награды в симуляции может стартовать без демонстраций, используя описание задачи и интерфейс среды.
+        \item \textbf{Риски нестабильности}: RL-дообучение больших политик подвержено деградации базовых навыков и чувствительно к настройкам; в треке генерации награды основной источник нестабильности переносится на корректность и согласованность $R_{\text{VLM}}$.
+        \item \textbf{Сопоставимость с литературой}: для трека VLM-наград существует развитая линия работ на стандартных симуляционных доменах (MetaWorld, ManiSkill), что упрощает честное сравнение при фиксированных вычислительных бюджетах.
+    \end{enumerate}
+
+    Для экспериментального исследования в данной работе выбирается трек \textbf{RL-дообучения VLA-моделей}, поскольку он:
+
+\begin{enumerate}
+    \item непосредственно соответствует теме ВКР -- повышение эффективности управления роботами \textit{с использованием} визуально-языковых моделей, а не замена VLA компактным RL-агентом;
+    \item опирается на актуальные работы: PLD~\cite{pld2026}, показавшую 99\% SR на LIBERO через residual RL, и stage-aware RL~\cite{starevla2025} (98\% на SIMPLER) со стадийными вознаграждениями;
+    \item позволяет сравнить девять открытых VLA-моделей (OpenVLA-OFT, UniVLA, $\pi_0$, CogACT, SmolVLA, $\pi_0$-fast, SpatialVLA, Octo, RT-1-X) в едином протоколе;
+    \item даёт измеримый прирост SR (+1--4~п.п.) при умеренном бюджете (300~тыс.\ шагов/набор), что практически значимо для промышленного развёртывания.
+\end{enumerate}
+
+    \textbf{Выбор бенчмарка}. Основной бенчмарк -- \textbf{LIBERO}~\cite{liu2023libero} (RL-дообучение VLA, серии~1--4). Дополнительно -- \textbf{MetaWorld MT10}~\cite{yu2020metaworld} для вспомогательной серии~5 (VLM-награды), моделирующей сценарий без предобученной VLA.
+
+    \textbf{Базовые линии и критерии честного сравнения}. Для корректного сравнения фиксируются:
+    \begin{enumerate}
+        \item \textbf{VLA-baseline без RL} (отправная точка): инференс предобученных VLA-политик без дообучения.
+        \item \textbf{Residual SAC + стадийное вознаграждение} (основной метод): замороженная VLA + лёгкий SAC-агент по схеме PLD~\cite{pld2026}.
+        \item \textbf{STARE-PPO} (альтернатива): stage-aware PPO с частичной разморозкой VLA по STARE-VLA~\cite{starevla2025}.
+        \item \textbf{Direct SAC} (негативная линия): end-to-end разморозка VLA -- контроль риска катастрофического забывания.
+    \end{enumerate}
+
+    Справедливость сравнения обеспечивается единым вычислительным бюджетом и едиными условиями оценки: одинаковая среда/версии, одинаковое пространство действий и наблюдений, одинаковая архитектура политики RL, одинаковые горизонты эпизодов, одинаковое число шагов обучения, одинаковые сиды и одинаковый протокол оценки (число эпизодов и критерий успеха), а также единый способ агрегации результатов по задачам и сидам.
+
+    На рисунке~\ref{fig:decision_tree} представлен алгоритм выбора направления интеграции VLM/VLA и RL, обобщающий выводы настоящей работы и аналитического обзора.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        decision/.style={diamond, aspect=2.4, draw, fill=yellow!15, align=center, inner sep=0pt, font=\scriptsize, text width=2.5cm},
+        block/.style={draw, rounded corners=2pt, align=center, text width=3.4cm, minimum height=1.0cm, font=\small},
+        line/.style={semithick},
+        arr/.style={line, -{Stealth[length=3mm, width=2.2mm]}},
+        lbl/.style={font=\scriptsize, fill=white, inner sep=1.5pt}
+    ]
+        % -- main vertical spine --
+        \node[block, fill=blue!8]  (start) at (0, 0)    {Задача манипулирования + языковая инструкция};
+        \node[decision]            (d1)    at (0, -3.0) {Есть VLA с SR\,$>$\,90\%?};
+        \node[decision]            (d2)    at (0, -6.0) {Есть демонстрации / эксперт?};
+        \node[decision]            (d3)    at (0, -9.0) {Контактная динамика?};
+        % -- terminal blocks (right of spine) --
+        \node[block, fill=green!12]  (r1) at (6.6, -3.0) {RL-дообучение VLA (residual SAC + стадии)};
+        \node[block, fill=orange!12] (r2) at (6.6, -6.0) {VLM $\rightarrow$ награда $\rightarrow$ RL};
+        % -- terminal blocks (bottom) --
+        \node[block, fill=purple!10] (r3a) at (-4.3, -11.8) {Итеративная кодогенерация (3--5 итераций)};
+        \node[block, fill=purple!10] (r3b) at (4.3, -11.8)  {1 итерация достаточна};
+
+        % spine arrows (vertical, strictly orthogonal)
+        \draw[arr] (start.south) -- (d1.north);
+        \draw[arr] (d1.south) -- node[lbl, left] {нет} (d2.north);
+        \draw[arr] (d2.south) -- node[lbl, left] {да}  (d3.north);
+
+        % horizontal exits (strictly orthogonal)
+        \draw[arr] (d1.east) -- node[lbl, above] {да}  (r1.west);
+        \draw[arr] (d2.east) -- node[lbl, above] {нет} (r2.west);
+
+        % d3 split -> r3a / r3b (vertical + horizontal only)
+        \coordinate (split3) at (0, -10.6);
+        \draw[line] (d3.south) -- (split3);
+        \draw[arr]  (split3) -| node[lbl, above, pos=0.25] {да}  (r3a.north);
+        \draw[arr]  (split3) -| node[lbl, above, pos=0.25] {нет} (r3b.north);
+    \end{tikzpicture}
+    \caption{Алгоритм выбора направления интеграции VLM/VLA и RL.}
+    \label{fig:decision_tree}
+\end{figure}
+
+\section{Архитектура системы}
+\label{sec:architecture}
+
+    Предлагаемая система состоит из трёх взаимодействующих компонентов.
+
+    VLA-компонент -- предобученная визуально-языковая модель действий $\pi_{\text{VLA}}(a|o, l)$, замороженная на этапе RL-дообучения. Принимает изображение $o_t$ и текстовую инструкцию $l$, выдаёт базовое действие $a_{\text{VLA}}$.
+
+    Residual RL-компонент -- лёгкий SAC-агент $\Delta\pi_{\text{RL}}$, обучаемый поверх замороженной VLA. Итоговое действие: $a_t = a_{\text{VLA}} + \Delta a_{\text{RL}}$. Архитектура residual-агента: MLP 256/256, вход -- визуальный эмбеддинг, проприоцепция и текстовый эмбеддинг инструкции.
+
+    Модуль стадийного вознаграждения вычисляет $R_{\text{stage}}$ по четырём фазам манипуляции (Reach $\to$ Grasp $\to$ Transport $\to$ Place) по аналогии со STARE-VLA~\cite{starevla2025}.
+
+    Среда симуляции -- бенчмарк LIBERO~\cite{liu2023libero} (ROBOSUITE, робот Franka Panda).
+
+    Взаимодействие компонентов показано на рисунке~\ref{fig:architecture}. Цикл: (1)~среда выдаёт $(o_t, l)$; (2)~VLA генерирует $a_{\text{VLA}}$; (3)~residual-агент добавляет коррекцию $\Delta a$; (4)~среда возвращает новое состояние и $R_{\text{stage}}$.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        box/.style={draw, rounded corners=2pt, align=center, text width=3.0cm, minimum height=1.1cm, font=\small},
+        line/.style={semithick},
+        arr/.style={line, -{Stealth[length=3mm, width=2.2mm]}},
+        dasharr/.style={line, dashed, -{Stealth[length=3mm, width=2.2mm]}},
+        lbl/.style={font=\scriptsize, fill=white, inner sep=2pt}
+    ]
+        \node[box, fill=gray!8]    (env) at (0, 0)    {Среда LIBERO (ROBOSUITE)};
+        \node[box, fill=purple!10] (vla) at (4.6, 0)  {VLA $\pi_{\text{VLA}}$ (заморожена)};
+        \node[box, fill=blue!8]    (rl)  at (9.2, 0)  {Residual SAC $\Delta\pi_{\text{RL}}$};
+        \node[box, fill=green!10]  (rew) at (9.2, 3.0) {Стадийная награда $R_{\text{stage}}$};
+        \node[box, fill=orange!10] (log) at (4.6, -3.4) {Логирование: SR, кривые обучения};
+
+        % forward path (horizontal)
+        \draw[arr] (env.east) -- node[lbl, above] {$o_t,\ l$} (vla.west);
+        \draw[arr] (vla.east) -- node[lbl, above] {$a_{\text{VLA}}$} (rl.west);
+
+        % reward -> rl (vertical)
+        \draw[arr] (rew.south) -- node[lbl, right] {$R_{\text{stage}}$} (rl.north);
+
+        % state env -> rew (up, right, down) -- strictly orthogonal
+        \coordinate (s1) at (0, 4.8);
+        \coordinate (s2) at (9.2, 4.8);
+        \draw[line] (env.north) -- (s1);
+        \draw[line] (s1) -- node[lbl, above] {состояние $s_t$} (s2);
+        \draw[arr]  (s2) -- (rew.north);
+
+        % action rl -> env (down, left, up) -- strictly orthogonal
+        \coordinate (a1) at (9.2, -1.8);
+        \coordinate (a2) at (0, -1.8);
+        \draw[line] (rl.south) -- (a1);
+        \draw[line] (a1) -- node[lbl, above, pos=0.6] {$a_t = a_{\text{VLA}} + \Delta a_{\text{RL}}$} (a2);
+        \draw[arr]  (a2) -- (env.south);
+
+        % logging tap (dashed, vertical)
+        \fill (4.6, -1.8) circle (1.6pt);
+        \draw[dasharr] (4.6, -1.8) -- (log.north);
+
+        \node[draw, dashed, rounded corners=3pt, inner sep=0.5cm, fit=(env)(vla)(rl)(rew), label={[font=\small]above:Цикл RL-дообучения VLA}] {};
+    \end{tikzpicture}
+    \caption{Архитектура прототипа: замороженная VLA + residual SAC + стадийное вознаграждение на LIBERO.}
+    \label{fig:architecture}
+\end{figure}
+
+\section{Методика проведения эксперимента}
+\label{sec:methodology}
+
+\subsection{Варьируемые факторы}
+\label{subsec:factors}
+
+    В эксперименте варьируются следующие факторы:
+
+\begin{enumerate}
+    \item VLA-модель: OpenVLA-OFT-7B, UniVLA-7B, $\pi_0$-3B, CogACT-8B, SmolVLA-2.2B, $\pi_0$-fast-3B, SpatialVLA-4B, Octo-Small, RT-1-X.
+    \item Схема RL-дообучения: residual SAC + stage, STARE-PPO, direct SAC (unfrozen).
+    \item Тип вознаграждения: стадийное $R_{\text{stage}}$ vs разреженное бинарное.
+    \item Заморозка VLA: полная vs частичная (последние 2 слоя) vs полная разморозка.
+    \item Бюджет обучения: 150k / 300k шагов на набор LIBERO.
+\end{enumerate}
+
+\subsection{Фиксируемые параметры}
+\label{subsec:fixed}
+
+    Фиксируются: симулятор ROBOSUITE, четыре набора LIBERO (Object, Spatial, Goal, Long), визуальные наблюдения 224$\times$224, пространство действий 7-DoF, архитектура residual-агента (256/256), протокол оценки (10 эпизодов/задачу, 3 seed среды: 7, 13, 42), бюджет 300~тыс.\ шагов/набор.
+
+    Для сопоставимости все методы RL оцениваются при одинаковом бюджете. Используется 3 независимых seed-а с отчётом доверительных интервалов.
+
+\subsection{Метрики оценки}
+\label{subsec:metrics}
+
+    Для оценки используются следующие метрики:
+
+\begin{enumerate}
+    \item Success rate (SR) -- доля успешно выполненных задач (основная метрика), определённая в выражении~(\ref{eq:success_rate}).
+    \item Sample efficiency -- число шагов взаимодействия со средой, необходимое для достижения целевого SR (например, 80\%).
+    \item Обобщение -- SR на задачах и инструкциях, не встречавшихся при обучении.
+    \item Стабильность обучения -- дисперсия SR по seed-ам и частота ``провалов'' (случаи, когда метод не достигает заданного порога качества при фиксированном бюджете).
+\end{enumerate}
+
+    Пороги качества определяются на основе результатов из литературы: для LIBERO $>$95\% (Spatial, Goal, Object) и $>$90\% (Long); для MetaWorld MT10 $>$80\%; для SIMPLER Bridge $>$70\%.
+
+\subsection{План экспериментов}
+\label{subsec:plan}
+
+    Основные эксперименты (серии~1--4) -- RL-дообучение VLA на LIBERO. Дополнительная серия~5 -- VLM-награды на MetaWorld (не фокус работы, но необходима для сравнения направлений).
+
+\begin{enumerate}
+    \item VLA-baseline: SR девяти VLA без RL на LIBERO.
+    \item Сравнение RL-схем на OpenVLA-OFT-7B.
+    \item RL-дообучение всех VLA (основной результат).
+    \item Абляция RL-компонентов.
+    \item[\textit{доп.}] VLM-кодогенерация награды + SAC на MetaWorld (reach, push, pick-place).
+\end{enumerate}
+
+    Для каждой серии фиксируется бюджет $N_{\text{steps}} = 300\,000$ шагов/набор и единый протокол: оценка каждые 50~тыс.\ шагов на 10 эпизодах/задачу, greedy-инференс VLA. Итоговый SR -- среднее по 40 задачам (4 набора $\times$ 10 задач).
+
+\subsection{Статистическая обработка}
+\label{subsec:stats}
+
+    Каждый эксперимент повторяется с тремя независимыми seed-ами среды (7, 13, 42). Для каждой точки кривой обучения рассчитывается среднее значение SR по seed-ам, а также 95\% доверительный интервал по $t$-распределению Стьюдента (см. приложение~А.7).
+
+    Поскольку SR оценивается по конечному числу эпизодов, дополнительно учитывается дисперсия биномиальной оценки. Для итоговых SR по каждой задаче (и по агрегированному SR) строятся доверительные интервалы для доли успехов (по методу Клоппера--Пирсона), а затем выполняется агрегация по seed-ам (среднее и стандартное отклонение).
+
+    Для попарного сравнения методов при равном бюджете шагов вычисляется разность средних SR с 95\% доверительным интервалом; один и тот же статистический протокол применяется ко всем сравниваемым методам.
+
+\section{Технологический стек}
+\label{sec:techstack}
+
+    Реализация прототипа выполняется на Python с использованием: PyTorch и transformers (HuggingFace) -- загрузка VLA-моделей; Stable-Baselines3~\cite{stable_baselines3} -- SAC и PPO; LIBERO/ROBOSUITE -- симуляция; OpenVLA, SmolVLA, $\pi_0$, Octo -- предобученные чекпоинты.
+
+    Код размещается в репозитории \url{https://github.com/mfclabber/bachelor-thesis} с документацией, конфигурациями Hydra и скриптами воспроизведения всех пяти серий.
+
+\endinput

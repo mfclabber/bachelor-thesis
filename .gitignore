@@ -12,17 +12,34 @@ multirun/
 wandb/
 
 # Results artifacts (keep folder structure, ignore large files)
-results/**/*.pt
-results/**/*.ckpt
-results/**/*.zip
-results/**/*.mp4
-results/**/*.png
-!results/**/.gitkeep
+code/results/**/*.pt
+code/results/**/*.ckpt
+code/results/**/*.zip
+code/results/**/*.mp4
+code/results/**/*.png
+!code/results/**/.gitkeep
 
 # Model weights / caches
 *.bin
 *.safetensors
 .cache/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.nav
+*.snm
+*.vrb
+*.synctex.gz
+*.run.xml
+*.bbl-SAVE-ERROR
 
 # OS
 .DS_Store

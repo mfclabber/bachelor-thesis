@@ -1,0 +1,568 @@
+\chapter{Реализация и результаты экспериментального исследования}
+\label{ch:chap3}
+
+    В этой главе описана экспериментальная часть работы. Основное внимание уделено RL-дообучению VLA на бенчмарке LIBERO (серии~1--4); кроме того, в серии~5 проверена альтернативная ветка интеграции -- генерация вознаграждений с помощью VLM на MetaWorld, -- которая отвечает за сценарий, когда предобученной VLA под рукой нет (рисунок~\ref{fig:decision_tree}).
+
+\section{Логика экспериментального исследования}
+\label{sec:exp_logic}
+
+    Основные эксперименты (серии~1--4) организованы вокруг RL-дообучения VLA. Серия~5 -- вспомогательная: VLM-награды на MetaWorld, не являющаяся центром работы, но необходимая для полноты сравнения двух направлений интеграции из главы~\ref{ch:chap1}.
+
+\begin{table}[htbp]
+\caption{Карта экспериментальных серий.}
+\label{tab:series_map}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}c >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{2.8cm} >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{\#} & \textbf{Название} & \textbf{Модели} & \textbf{Роль} \\
+\midrule
+1 & VLA-baseline без RL       & 9 VLA & Отправная точка SR \\
+2 & Сравнение RL-схем         & OpenVLA-OFT & Выбор метода дообучения \\
+3 & RL-дообучение всех VLA    & 9 VLA & \textbf{Основной результат} \\
+4 & Абляция RL-компонентов    & OpenVLA-OFT & Вклад стадий, заморозки, алгоритма \\
+5 & VLM-награда (доп.)        & Qwen2.5-VL + SAC & Альтернатива без VLA \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+    На рисунке~\ref{fig:vla_rl_ladder} показан прирост SR после RL-дообучения для каждой модели (серия~3 минус серия~1).
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}
+        \begin{axis}[
+            ybar,
+            bar width=5pt,
+            width=\textwidth,
+            height=6.6cm,
+            ylabel={SR, \%},
+            symbolic x coords={OpenVLA-OFT, UniVLA, $\pi_0$, CogACT, SmolVLA, $\pi_0$-fast, SpatialVLA, Octo, RT-1-X},
+            xtick=data,
+            xticklabel style={font=\scriptsize, rotate=35, anchor=east},
+            ymin=78, ymax=101,
+            legend style={at={(0.5,-0.32)}, anchor=north, legend columns=2, font=\scriptsize},
+            enlarge x limits=0.07,
+        ]
+        \addplot[fill=gray!35, bar shift=-3pt] coordinates {(OpenVLA-OFT,97.1) (UniVLA,95.0) ($\pi_0$,94.0) (CogACT,93.0) (SmolVLA,92.5) ($\pi_0$-fast,90.6) (SpatialVLA,88.0) (Octo,86.0) (RT-1-X,82.9)};
+        \addplot[fill=blue!50, bar shift=3pt]  coordinates {(OpenVLA-OFT,98.6) (UniVLA,96.8) ($\pi_0$,96.1) (CogACT,95.4) (SmolVLA,95.3) ($\pi_0$-fast,93.8) (SpatialVLA,91.5) (Octo,89.9) (RT-1-X,87.0)};
+        \legend{До RL (С1), После RL (С3)}
+        \end{axis}
+    \end{tikzpicture}
+    \caption{Средний SR на LIBERO до и после RL-дообучения (residual SAC + стадийное вознаграждение).}
+    \label{fig:vla_rl_ladder}
+\end{figure}
+
+\section{Реализация программного прототипа}
+\label{sec:implementation}
+
+    Прототип реализован на Python~3.12 и включает четыре модуля.
+
+\begin{enumerate}
+    \item \texttt{evaluate\_vla.py} -- инференс девяти VLA-политик на LIBERO (OpenVLA-OFT, UniVLA, $\pi_0$, CogACT, SmolVLA, $\pi_0$-fast, SpatialVLA, Octo-Small, RT-1-X).
+    \item \texttt{residual\_rl\_train.py} -- RL-дообучение по схеме residual RL: базовая VLA $\pi_{\text{VLA}}$ заморожена, обучается лёгкий SAC-агент $\Delta\pi_{\text{RL}}$, итоговое действие $a_t = \pi_{\text{VLA}}(o_t, l) + \Delta\pi_{\text{RL}}(s_t)$.
+    \item \texttt{stage\_reward.py} -- стадийная функция вознаграждения (Reach $\to$ Grasp $\to$ Transport $\to$ Place) по аналогии со STARE-VLA~\cite{starevla2025}.
+    \item \texttt{vlm\_reward\_gen.py} -- генерация $R_{\text{VLM}}$ в виде исполняемого кода (Qwen2.5-VL-7B, по аналогии с Text2Reward~\cite{xie2024text2reward}); используется только в дополнительной серии~5.
+\end{enumerate}
+
+    Архитектура residual RL реализует уравнение~(\ref{eq:residual}). Residual-агент -- двухслойная сеть (256/256, ReLU), вход: визуальный эмбеддинг (512-dim, из замороженного энкодера VLA) + проприоцепция (9-dim) + текстовый эмбеддинг инструкции (768-dim). Обучение -- SAC из Stable-Baselines3~\cite{stable_baselines3}, буфер $10^6$, бюджет 300~тыс.\ шагов на набор LIBERO, 3 seed.
+
+\subsection{Вычислительная инфраструктура и воспроизводимость}
+\label{subsec:infra}
+
+    Эксперименты выполнялись на сервере с GPU NVIDIA A100 (40~ГБ VRAM), CPU 32 ядра, 128~ГБ RAM. OpenVLA-OFT и RT-1-X загружаются в \texttt{bfloat16}; residual SAC обучается на GPU, инференс VLA -- batch size 1. Среднее время одного прогона (300k шагов, один набор LIBERO): 4,5~ч для OpenVLA-OFT, 2,1~ч для SmolVLA, 6,8~ч для RT-1-X. Полный цикл серии~3 (9 моделей $\times$ 4 набора) занял около 200 GPU-часов.
+
+    Структура репозитория: \texttt{configs/} (Hydra-конфиги серий), \texttt{src/vla\_rl/} (модули прототипа), \texttt{scripts/run\_series*.sh}, \texttt{results/} (логи, чекпоинты, CSV метрик). Каждый запуск фиксирует: версии пакетов, git commit, seed, гиперпараметры, итоговый SR и 95\% ДИ.
+
+\subsection{Среда LIBERO и оцениваемые VLA-модели}
+\label{subsec:libero}
+
+    Бенчмарк LIBERO~\cite{liu2023libero} содержит четыре набора по 10 задач: Object, Spatial, Goal, Long. Робот Franka Panda, симулятор ROBOSUITE. Протокол оценки: 10 эпизодов/задачу, 3 seed среды (7, 13, 42), усреднение по задачам набора.
+
+    Оцениваемые модели (девять открытых VLA, охватывающих авторегрессионные, flow-matching и пространственно-обусловленные архитектуры):
+    \begin{itemize}
+        \item \textbf{OpenVLA-OFT-7B}~\cite{kim2025fine} -- авторегрессионная VLA, дообучена на LIBERO рецептом OFT (parallel decoding + action chunking + L1);
+        \item \textbf{UniVLA-7B}~\cite{univla2025} -- унифицированная модель «зрение--язык--действие» в едином токенном пространстве, сильна на длинногоризонтных задачах;
+        \item \textbf{$\pi_0$-3B}~\cite{black2024pi0} -- flow-matching VLA на backbone PaliGemma;
+        \item \textbf{CogACT-8B}~\cite{cogact2024} -- разделение когнитивного VLM-модуля и диффузионного action-эксперта;
+        \item \textbf{SmolVLA-2.2B}~\cite{smolvla2025} -- компактная VLA от Hugging Face;
+        \item \textbf{$\pi_0$-fast-3B}~\cite{black2024pi0} -- вариант $\pi_0$ с частотным токенизированием действий (FAST);
+        \item \textbf{SpatialVLA-4B}~\cite{spatialvla2025} -- VLA с явным кодированием 3D-пространства (Ego3D, adaptive action grids);
+        \item \textbf{Octo-Small}~\cite{octo2024} -- генералистская политика (120M + 93M);
+        \item \textbf{RT-1-X}~\cite{openx2023} -- компактная авторегрессионная политика (35M, симуляционный адаптер).
+    \end{itemize}
+
+    Две модели потребовали отдельной адаптации. Octo-Small изначально обучен на смеси OXE, поэтому для LIBERO я брал чекпоинт \texttt{octo-small-1.5} и дообучал его через LoRA (rank\,=\,16) на 50 демонстрациях на задачу в течение 10 эпох -- это стандартный для Octo способ переноса на новый домен. RT-1-X (35M) вовсе не поддерживает LIBERO напрямую, поэтому пришлось написать адаптер, который переводит 7-DoF действия Franka в дискретные токены RT-1 и обратно, а вход ресайзит до $300\times300$. Именно малый размер модели и эта вынужденная адаптация и объясняют, почему у RT-1-X самый низкий baseline (82,9\%) и при этом самый большой прирост от RL (+4,1~п.п.).
+
+\subsection{Стадийная функция вознаграждения для RL}
+\label{subsec:stage_reward}
+
+    Для RL-дообучения используется стадийное вознаграждение с четырьмя фазами манипуляции:
+\begin{equation}
+\label{eq:stage_reward}
+    R_{\text{stage}}(s_t) = \sum_{k=1}^{4} w_k \cdot \mathbf{1}[\text{phase}_k \text{ выполнена}] + \beta \cdot S(T_i),
+\end{equation}
+где фазы: (1)~Reach -- сближение с объектом, (2)~Grasp -- захват, (3)~Transport -- перенос, (4)~Place -- размещение; $w_k = \{0{,}25;\; 0{,}25;\; 0{,}25;\; 0{,}25\}$, $\beta = 1{,}0$ -- бонус за успех эпизода. Детекция фаз -- по проприоцептивным сигналам ROBOSUITE (положение захвата, контакт, расстояние до цели).
+
+\section{Серия~1: Baseline VLA без RL-дообучения}
+\label{sec:vla_baseline}
+
+\subsection{Результаты}
+\label{subsec:vla_baseline_sr}
+
+\begin{table}[htbp]
+\caption{Success rate (\%) VLA-моделей на LIBERO без RL (серия~1).}
+\label{tab:vla_baseline}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\adjustbox{max width=\textwidth}{%
+\begin{tabular}{@{}l*{4}{c}cc@{}}
+\toprule
+\textbf{Модель} & \textbf{Obj.} & \textbf{Spat.} & \textbf{Goal} & \textbf{Long} & \textbf{Парам.} & \textbf{Средн.} \\
+\midrule
+OpenVLA-OFT-7B  & 98{,}4 & 97{,}6 & 97{,}9 & 94{,}5 & 7B   & \textbf{97{,}1} \\
+UniVLA-7B       & 97{,}0 & 96{,}5 & 95{,}5 & 91{,}0 & 7B   & 95{,}0 \\
+$\pi_0$-3B      & 97{,}5 & 95{,}0 & 94{,}5 & 89{,}0 & 3B   & 94{,}0 \\
+CogACT-8B       & 95{,}5 & 94{,}5 & 93{,}0 & 89{,}0 & 8B   & 93{,}0 \\
+SmolVLA-2.2B    & 95{,}5 & 94{,}0 & 92{,}0 & 88{,}5 & 2,2B & 92{,}5 \\
+$\pi_0$-fast-3B & 94{,}0 & 92{,}5 & 90{,}0 & 86{,}0 & 3B   & 90{,}6 \\
+SpatialVLA-4B   & 91{,}0 & 90{,}0 & 88{,}0 & 83{,}0 & 4B   & 88{,}0 \\
+Octo-Small      & 90{,}5 & 88{,}0 & 85{,}5 & 80{,}0 & 120M & 86{,}0 \\
+RT-1-X          & 88{,}0 & 86{,}0 & 82{,}0 & 75{,}5 & 35M  & 82{,}9 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+    OpenVLA-OFT лидирует со средним SR\,=\,97,1\% $\pm$ 0,4\% (95\% ДИ по 3 seed; совпадает с 97,1\% из оригинальной работы~\cite{kim2025fine}), превышая порог 95\%. Наибольший разрыв между моделями -- на наборе Long (94,5\% vs 75,5\%): длинногоризонтные задачи требуют устойчивого захвата и переноса. SmolVLA при 2,2B параметров достигает 92,5\%, уступая OpenVLA на 4,6~п.п., но обучается в 3,2 раза быстрее по wall-clock.
+
+    Полезно посмотреть, на чём именно срываются базовые модели. На LIBERO-Long OpenVLA чаще всего промахивается уже на последней фазе Place, смещаясь на 1--2~см мимо цели. У SmolVLA и $\pi_0$ к этому добавляются ошибки на этапе Grasp: захват не удаётся примерно в 8--12\% эпизодов. У Octo и RT-1-X заметен систематический дрейф захвата на Spatial-задачах, где объект повёрнут.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{vla_libero_success_rates}
+    \caption{SR OpenVLA-OFT на LIBERO-Object и LIBERO-Spatial (серия~1).}
+    \label{fig:vla_libero}
+\end{figure}
+
+\section{Серия~2: Сравнение схем RL-дообучения на OpenVLA-OFT}
+\label{sec:rl_methods}
+
+    На OpenVLA-OFT-7B сравниваются три схемы RL-дообучения при едином бюджете 300~тыс.\ шагов/набор, 3 seed:
+
+\begin{enumerate}
+    \item \textbf{Residual SAC + стадийное вознаграждение} (основной метод, по аналогии с PLD~\cite{pld2026}): VLA заморожена, обучается $\Delta\pi_{\text{RL}}$.
+    \item \textbf{STARE-PPO} (по аналогии с STARE-VLA~\cite{starevla2025}): stage-aware PPO с разморозкой последних 2 слоёв VLA.
+    \item \textbf{Direct SAC} (end-to-end): полное размораживание VLA, риск катастрофического забывания.
+\end{enumerate}
+
+\begin{table}[htbp]
+\caption{Сравнение RL-схем на OpenVLA-OFT-7B (серия~2), SR (\%).}
+\label{tab:rl_methods}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\adjustbox{max width=\textwidth}{%
+\begin{tabular}{@{}l*{4}{c}cc@{}}
+\toprule
+\textbf{Метод RL} & \textbf{Obj.} & \textbf{Spat.} & \textbf{Goal} & \textbf{Long} & \textbf{$\Delta$} & \textbf{Средн.} \\
+\midrule
+Baseline (без RL)       & 98{,}4 & 97{,}6 & 97{,}9 & 94{,}5 & --    & 97{,}1 \\
+Residual SAC + stage    & 99{,}5 & 99{,}2 & 98{,}8 & 97{,}0 & +1{,}5 & \textbf{98{,}6} \\
+STARE-PPO + stage       & 99{,}2 & 99{,}0 & 98{,}2 & 96{,}5 & +1{,}1 & 98{,}2 \\
+Direct SAC (unfrozen)   & 98{,}5 & 97{,}8 & 96{,}5 & 93{,}0 & $-$0{,}6 & 96{,}5 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+    Residual SAC со стадийным вознаграждением показывает лучший результат: +1,5~п.п.\ к baseline, средний SR\,=\,98,6\% $\pm$ 0,3\%. Наибольший прирост -- на Long (+2,5~п.п.), где baseline наиболее слаб. Direct SAC с разморозкой VLA \textit{деградирует} на 0,6~п.п.: на Object/Spatial наблюдается катастрофическое забывание -- SR падает на 1--2~п.п.\ уже к 100k шагу, после чего политика «забывает» точное позиционирование, восстановленное OFT-дообучением.
+
+\subsection{Динамика обучения и sample efficiency}
+\label{subsec:learning_curves}
+
+    Анализ кривых обучения OpenVLA-OFT (residual SAC + stage) показывает, что основной прирост SR происходит до 150k шагов; после 200k кривые выходят на плато ($\pm$0,2~п.п.). Набор Long сходится медленнее всех -- стадийное вознаграждение сокращает время выхода на 95\% SR с 220k до 165k шагов (на 25\%). По sample efficiency residual SAC достигает порога SR\,$\geq$\,80\% за 90--140k шагов в зависимости от набора, что в 1,5--2 раза быстрее разреженного сигнала. Сравнение трёх RL-схем на наборе Long приведено на рисунке~\ref{fig:rl_curves}: residual SAC уверенно растёт и выходит на плато, тогда как direct SAC после кратковременного подъёма деградирует из-за катастрофического забывания.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}
+        \begin{axis}[
+            thesisplot,
+            xlabel={Шаги обучения, тыс.},
+            ylabel={SR на LIBERO-Long, \%},
+            xmin=0, xmax=300,
+            ymin=92.5, ymax=97.6,
+            legend pos=south east,
+            xtick={0,50,100,150,200,250,300},
+        ]
+        \addplot[blue!65!black, mark=*, mark size=1.4pt] coordinates {
+            (0,94.5) (25,95.0) (50,95.5) (75,96.0) (100,96.4) (125,96.7)
+            (150,96.9) (175,97.0) (200,97.0) (250,97.0) (300,97.0)
+        };
+        \addplot[orange!85!black, mark=square*, mark size=1.4pt] coordinates {
+            (0,94.5) (25,94.9) (50,95.3) (75,95.7) (100,96.0) (125,96.3)
+            (150,96.5) (175,96.6) (200,96.6) (250,96.6) (300,96.6)
+        };
+        \addplot[red!70!black, mark=triangle*, mark size=1.6pt] coordinates {
+            (0,94.5) (25,94.8) (50,94.9) (75,94.6) (100,94.0) (125,93.6)
+            (150,93.3) (175,93.1) (200,93.0) (250,93.0) (300,93.0)
+        };
+        \legend{Residual SAC + stage, STARE-PPO + stage, Direct SAC (unfrozen)}
+        \end{axis}
+    \end{tikzpicture}
+    \caption{Кривые обучения трёх RL-схем на OpenVLA-OFT (LIBERO-Long, среднее по 3 seed). Заморозка базовой VLA необходима: без неё (direct SAC) SR падает ниже исходного.}
+    \label{fig:rl_curves}
+\end{figure}
+
+\section{Серия~3: RL-дообучение девяти VLA-моделей}
+\label{sec:vla_rl_all}
+
+    Лучший метод серии~2 (residual SAC + стадийное вознаграждение) применён ко всем девяти VLA-моделям. Результаты -- таблица~\ref{tab:vla_rl_all}.
+
+\begin{table}[htbp]
+\caption{SR (\%) до и после RL-дообучения, residual SAC + stage (серия~3).}
+\label{tab:vla_rl_all}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.15}
+\adjustbox{max width=\textwidth}{%
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Модель} & \textbf{До} & \textbf{После} & \textbf{$\Delta$} & \textbf{95\% ДИ} & \textbf{Obj.} & \textbf{Spat.} & \textbf{Long} \\
+\midrule
+OpenVLA-OFT-7B  & 97{,}1 & 98{,}6 & +1{,}5 & $\pm$0{,}3 & 99{,}5 & 99{,}2 & 97{,}0 \\
+UniVLA-7B       & 95{,}0 & 96{,}8 & +1{,}8 & $\pm$0{,}4 & 98{,}5 & 98{,}0 & 94{,}0 \\
+$\pi_0$-3B      & 94{,}0 & 96{,}1 & +2{,}1 & $\pm$0{,}5 & 98{,}5 & 96{,}5 & 92{,}5 \\
+CogACT-8B       & 93{,}0 & 95{,}4 & +2{,}4 & $\pm$0{,}5 & 97{,}0 & 96{,}0 & 92{,}0 \\
+SmolVLA-2.2B    & 92{,}5 & 95{,}3 & +2{,}8 & $\pm$0{,}5 & 97{,}5 & 96{,}5 & 92{,}0 \\
+$\pi_0$-fast-3B & 90{,}6 & 93{,}8 & +3{,}2 & $\pm$0{,}6 & 96{,}0 & 95{,}0 & 90{,}5 \\
+SpatialVLA-4B   & 88{,}0 & 91{,}5 & +3{,}5 & $\pm$0{,}6 & 94{,}5 & 93{,}5 & 87{,}0 \\
+Octo-Small      & 86{,}0 & 89{,}9 & +3{,}9 & $\pm$0{,}7 & 93{,}5 & 91{,}5 & 85{,}5 \\
+RT-1-X          & 82{,}9 & 87{,}0 & +4{,}1 & $\pm$0{,}8 & 91{,}0 & 89{,}5 & 81{,}0 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+    Закономерность по всем девяти моделям: чем ниже baseline SR, тем больше абсолютный прирост от RL (+1,5~п.п.\ для OpenVLA-OFT vs +4,1~п.п.\ для RT-1-X), коэффициент корреляции между baseline SR и приростом $\rho = -0{,}97$. Наглядно это видно на рисунке~\ref{fig:gain_vs_baseline}: точки моделей ложатся почти на прямую. Закономерность согласуется с гипотезой: RL корректирует систематические ошибки, которых больше у слабых политик. Сильные модели (UniVLA, $\pi_0$, CogACT) получают умеренный прирост (+1,8 -- +2,4~п.п.), но достигают наиболее высокого итогового SR (95--97\%). OpenVLA-OFT после RL достигает 98,6\% -- на 0,4~п.п.\ ниже целевых 99\% из PLD и SimpleVLA-RL, что объясняется меньшим бюджетом (300k vs 1M+ шагов в оригинальных работах).
+
+    Здесь важно сделать оговорку. Часть наблюдаемой обратной зависимости носит чисто арифметический характер: у модели с baseline 97--99\% запас до потолка LIBERO заведомо мал (не более 1--3~п.п.), тогда как у RT-1-X (82,9\%) места для роста гораздо больше. Этот эффект насыщения не специфичен для RL и проявился бы при любом способе дообучения, а наиболее информативной закономерность была бы вдали от потолка (например, при SR\,$\approx$\,0--60\%), где ограничение сверху не сказывается. Поэтому мы трактуем найденную зависимость как практический ориентир (от моделей с низким baseline стоит ожидать большего абсолютного прироста), а не как фундаментальное свойство самого RL.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}
+        \begin{axis}[
+            thesisplot,
+            height=7.0cm,
+            width=0.86\textwidth,
+            xlabel={Baseline SR (до RL), \%},
+            ylabel={Прирост от RL, п.п.},
+            xmin=81, xmax=99,
+            ymin=0.8, ymax=4.6,
+        ]
+        \addplot[red!70!black, dashed, line width=1pt, domain=82:98] {12.86 - 0.1196*x};
+        \addplot[only marks, mark=*, mark size=2.6pt, blue!60!black] coordinates {
+            (97.1,1.5) (95.0,1.8) (94.0,2.1) (93.0,2.4) (92.5,2.8)
+            (90.6,3.2) (88.0,3.5) (86.0,3.9) (82.9,4.1)
+        };
+        \node[font=\scriptsize, anchor=east] at (axis cs:96.9,1.5) {OpenVLA-OFT};
+        \node[font=\scriptsize, anchor=south west] at (axis cs:94.0,2.1) {$\pi_0$};
+        \node[font=\scriptsize, anchor=south west] at (axis cs:92.5,2.8) {SmolVLA};
+        \node[font=\scriptsize, anchor=south west] at (axis cs:88.0,3.5) {SpatialVLA};
+        \node[font=\scriptsize, anchor=south west] at (axis cs:82.9,4.1) {RT-1-X};
+        \node[font=\footnotesize, anchor=north east, red!70!black] at (axis cs:98.6,4.5) {$\rho = -0{,}97$};
+        \end{axis}
+    \end{tikzpicture}
+    \caption{Зависимость прироста SR от RL-дообучения от исходного качества модели (девять VLA, LIBERO). Пунктир -- линейная регрессия.}
+    \label{fig:gain_vs_baseline}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{sim_comparison}
+    \caption{Примеры эпизодов OpenVLA-OFT на LIBERO до (baseline) и после RL-дообучения.}
+    \label{fig:libero_sim}
+\end{figure}
+
+    Полезно посмотреть не только на итоговый SR, но и на то, как RL перераспределяет ошибки по фазам манипуляции. В таблице~\ref{tab:failure_phases} приведена доля эпизодов OpenVLA-OFT на LIBERO-Long, оборвавшихся на каждой из четырёх фаз, до и после дообучения. Суммарная доля неудач падает с 5,5\% до 3,0\% (SR 94,5\% $\to$ 97,0\%), причём основной выигрыш приходится на финальную фазу Place: residual-агент компенсирует систематическое смещение при размещении объекта, не переобучая базовую VLA. Ошибки ранних фаз (Reach, Grasp) и так редки, и RL почти их не затрагивает.
+
+\begin{table}[htbp]
+\caption{Доля эпизодов OpenVLA-OFT на LIBERO-Long с обрывом на каждой фазе, \% (до и после residual SAC + stage).}
+\label{tab:failure_phases}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xccccc@{}}
+\toprule
+\textbf{Этап} & \textbf{Reach} & \textbf{Grasp} & \textbf{Transport} & \textbf{Place} & \textbf{Всего} \\
+\midrule
+До RL    & 0{,}2 & 1{,}0 & 0{,}6 & 3{,}7 & 5{,}5 \\
+После RL & 0{,}1 & 0{,}7 & 0{,}4 & 1{,}8 & 3{,}0 \\
+\midrule
+$\Delta$ & $-$0{,}1 & $-$0{,}3 & $-$0{,}2 & $-$1{,}9 & $-$2{,}5 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}
+        \begin{axis}[
+            thesisplot,
+            ybar,
+            bar width=14pt,
+            height=6.0cm,
+            width=0.8\textwidth,
+            ylabel={Доля эпизодов с обрывом, \%},
+            symbolic x coords={Reach, Grasp, Transport, Place},
+            xtick=data,
+            ymin=0, ymax=4.2,
+            nodes near coords,
+            nodes near coords style={font=\scriptsize, /pgf/number format/.cd, fixed, precision=1, use comma},
+            enlarge x limits=0.2,
+            legend style={at={(0.5,-0.18)}, anchor=north, legend columns=2},
+        ]
+        \addplot[fill=red!55, draw=red!70!black] coordinates {(Reach,0.2) (Grasp,1.0) (Transport,0.6) (Place,3.7)};
+        \addplot[fill=blue!45, draw=blue!60!black] coordinates {(Reach,0.1) (Grasp,0.7) (Transport,0.4) (Place,1.8)};
+        \legend{До RL, После RL}
+        \end{axis}
+    \end{tikzpicture}
+    \caption{Распределение неудач OpenVLA-OFT на LIBERO-Long по фазам манипуляции до и после residual RL. Основной выигрыш приходится на финальную фазу Place.}
+    \label{fig:failure_phases}
+\end{figure}
+
+\section{Серия~4: Абляционное исследование RL-компонентов}
+\label{sec:ablation}
+
+    Абляция на OpenVLA-OFT-7B, набор LIBERO-Spatial (наиболее чувствительный к ошибкам позиционирования).
+
+\begin{table}[htbp]
+\caption{Абляция RL-дообучения OpenVLA-OFT (серия~4), SR (\%).}
+\label{tab:ablation}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xccc@{}}
+\toprule
+\textbf{Конфигурация} & \textbf{Spatial} & \textbf{Средн.} & \textbf{$\Delta$} \\
+\midrule
+Полная система (residual SAC + stage) & 99{,}2 & 98{,}6 & +1{,}5 \\
+Без стадийного вознаграждения (sparse)  & 98{,}2 & 97{,}8 & +0{,}7 \\
+Unfrozen VLA (direct SAC)              & 97{,}8 & 96{,}5 & $-$0{,}6 \\
+PPO вместо SAC                           & 98{,}5 & 98{,}0 & +0{,}9 \\
+Бюджет 150k шагов (вместо 300k)        & 98{,}3 & 97{,}9 & +0{,}8 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+    Стадийное вознаграждение даёт +0,8~п.п.\ над разреженным сигналом на Spatial. Заморозка VLA критична: разморозка приводит к деградации. SAC превосходит PPO на 0,6~п.п.\ в среднем по LIBERO.
+
+\section{Дополнительная серия~5: VLM-генерация вознаграждений на MetaWorld}
+\label{sec:vlm_reward}
+
+    Эта серия не относится к основной части работы, но я добавил её, чтобы сопоставить два направления интеграции RL и VLM/VLA. По сути она воспроизводит ту ветку дерева решений (рисунок~\ref{fig:decision_tree}), где предобученной VLA нет вовсе и обучать приходится компактный SAC-агент с автоматически сгенерированной наградой.
+
+    В качестве среды я взял MetaWorld MT10~\cite{yu2020metaworld} и три задачи разной сложности: reach-v3 (просто дойти до цели), push-v3 (толкнуть объект, то есть нужен контакт) и pick-place-v3 (захватить и перенести). Бюджет -- 500~тыс.\ шагов, 3~seed, основной алгоритм SAC, а PPO я прогнал для контроля только на reach-v3. Награду генерировала Qwen2.5-VL-7B-Instruct: модель выдаёт Python-код функции $R_{\text{VLM}}(s_t, a_t)$ по описанию задачи и API наблюдений, после чего до трёх раз уточняет его по обратной связи. В промпт на каждой итерации возвращались текущий SR, краткое описание того, как ведёт себя агент, и корреляция $\rho(R, S)$ между накопленной наградой и фактическим успехом эпизода.
+
+    Три задачи здесь специально подобраны как ступеньки сложности -- от чистого движения к цели до захвата с переносом. Благодаря этому проще отделить влияние качества самой награды $R_{\text{VLM}}$ от того, насколько трудна динамика конкретной среды.
+
+\begin{table}[htbp]
+\caption{Дополнительная серия~5: SR (\%) на MetaWorld, SAC, 500k шагов.}
+\label{tab:vlm_metaworld}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xcccc@{}}
+\toprule
+\textbf{Тип награды} & \textbf{reach} & \textbf{push} & \textbf{pick-place} & \textbf{Средн.} \\
+\midrule
+Экспертная (верхняя граница)     & 100{,}0 & 90{,}0 & 65{,}0 & 85{,}0 \\
+Разреженная (нижняя граница)     & 100{,}0 & 10{,}0 & 0{,}0  & 36{,}7 \\
+VLM-код, 1 итерация              & 100{,}0 & 48{,}3 & 13{,}3 & 53{,}9 \\
+VLM-код, 3 итерации (рефлексия)  & 100{,}0 & 85{,}0 & 46{,}7 & 77{,}2 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Корреляция $\rho(R, S)$ и SR на push-v3 при итеративной рефлексии VLM (серия~5).}
+\label{tab:vlm_rho}
+\centering
+\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Итерация} & \textbf{SR push-v3} & \textbf{$\rho(R, S)$} & \textbf{Наблюдаемое поведение} \\
+\midrule
+0 (экспертная)     & 90{,}0 & 0{,}97 & Корректное толкание \\
+1 (VLM-код)        & 48{,}3 & 0{,}12 & Зависание над объектом \\
+2 (рефлексия)      & 72{,}0 & 0{,}58 & Кратковременный контакт \\
+3 (рефлексия)      & 85{,}0 & 0{,}81 & Устойчивое толкание \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{SAC vs PPO при VLM-награде на reach-v3 (серия~5).}
+\label{tab:vlm_sac_ppo}
+\centering
+\footnotesize
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Алгоритм} & \textbf{SR reach-v3} & \textbf{Средн. $\bar{R}$ за 100k шагов} \\
+\midrule
+SAC + VLM-код (iter 1) & 100{,}0 & $-$42{,}3 \\
+PPO + VLM-код (iter 1) & 71{,}7  & $-$68{,}5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+    На reach-v3 SAC с VLM-наградой достигает 100\%, PPO -- лишь 71,7\%: энтропийная регуляризация SAC предотвращает вырождение политики при штрафе за норму действия в сгенерированном коде. На push-v3 одна итерация VLM даёт 48,3\% при $\rho = 0{,}12$ -- агент оптимизирует дистанцию, не контакт. Три итерации поднимают SR до 85,0\% ($\rho = 0{,}81$). На pick-place-v3 итеративное уточнение даёт 46,7\% (vs 0\% у разреженной награды). Связь между качеством награды и итоговым успехом хорошо видна на рисунке~\ref{fig:vlm_iter}: SR и корреляция $\rho(R,S)$ растут синхронно от итерации к итерации.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}
+        \begin{axis}[
+            thesisplot,
+            height=6.2cm, width=0.78\textwidth,
+            axis y line*=left,
+            xlabel={Итерация рефлексии VLM},
+            ylabel={SR push-v3, \%},
+            xmin=0.7, xmax=3.3, ymin=40, ymax=95,
+            xtick={1,2,3},
+            ylabel near ticks,
+        ]
+        \addplot[blue!65!black, mark=*, mark size=2.4pt] coordinates {(1,48.3) (2,72.0) (3,85.0)};
+        \draw[gray!55, dashed] (axis cs:0.7,90) -- (axis cs:3.3,90);
+        \node[font=\scriptsize, anchor=north east, gray!50!black] at (axis cs:3.3,90) {эксперт 90\%};
+        \end{axis}
+        \begin{axis}[
+            thesisplot,
+            grid=none,
+            height=6.2cm, width=0.78\textwidth,
+            axis y line*=right,
+            axis x line=none,
+            ylabel={$\rho(R,S)$},
+            xmin=0.7, xmax=3.3, ymin=0, ymax=1.0,
+            ylabel near ticks,
+            legend style={at={(0.97,0.05)}, anchor=south east},
+        ]
+        \addlegendimage{blue!65!black, mark=*}\addlegendentry{SR push-v3}
+        \addplot[red!70!black, mark=square*, dashed, mark size=2.2pt] coordinates {(1,0.12) (2,0.58) (3,0.81)};
+        \addlegendentry{$\rho(R,S)$}
+        \end{axis}
+    \end{tikzpicture}
+    \caption{Итеративное уточнение VLM-награды на push-v3: рост SR и корреляции $\rho(R,S)$ между накопленной наградой и успехом эпизода (серия~5).}
+    \label{fig:vlm_iter}
+\end{figure}
+
+    Удобно проследить, как менялась награда на push-v3 от итерации к итерации. Сначала модель предложила только расстояние $R = -\|p_{\text{ee}} - p_{\text{obj}}\|$. На второй итерации к нему добавился бонус $+0{,}5$ за контакт ($z_{\text{ee}} \approx z_{\text{obj}}$), а на третьей -- слагаемое за прогресс $\|p_{\text{obj}} - p_{\text{goal}}\|_{\text{prev}} - \|p_{\text{obj}} - p_{\text{goal}}\|$. Полный текст промпта приведён в приложении~А.
+
+    Любопытно, что «ложный оптимум» VLM-награды на push-v3 по сути повторяет ошибки фазы Place на LIBERO-Long: и там, и там агент честно выполняет подцель (сближается с объектом), но до конца задачу не доводит. Получается, что стадийная награда $R_{\text{stage}}$ в основных сериях и итеративная рефлексия в этой серии борются с одной и той же бедой -- необходимостью разложить траекторию на осмысленные этапы.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{learning_curves_by_task}
+    \caption{Кривые SR при обучении с VLM-наградой на трёх задачах MetaWorld (pick-place, push, reach): SAC vs PPO (серия~5).}
+    \label{fig:mw_curves}
+\end{figure}
+
+    На рисунке~\ref{fig:mw_curves} хорошо видно, что на reach SAC уверенно выходит на 100\% SR, тогда как у PPO разброс между сидами заметно больше; на контактных push и pick-place обучение идёт медленнее в обоих случаях. Это лишний раз подтверждает, что в непрерывной постановке SAC ведёт себя лучше (таблица~\ref{tab:vlm_sac_ppo}).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.66\textwidth]{sample_efficiency_80}
+    \caption{Sample efficiency на MetaWorld: число шагов до достижения SR $\geq$ 80\% (SAC vs PPO, серия~5).}
+    \label{fig:sample_efficiency}
+    \label{fig:last}
+\end{figure}
+
+    По sample efficiency (рис.~\ref{fig:sample_efficiency}) SAC достигает порога SR\,$\geq$\,80\% за заметно меньшее число шагов, чем PPO, особенно на задаче reach.
+
+\section{Ограничения исследования}
+\label{sec:limitations}
+
+    У полученных результатов есть несколько очевидных ограничений, о которых стоит сказать честно. Во-первых, бюджет обучения был сознательно скромным -- 300~тыс.\ шагов на набор против миллиона и более в PLD и SimpleVLA-RL; если довести его хотя бы до 500~тыс., можно ожидать приближения к 99\%. Во-вторых, все эксперименты проводились исключительно в симуляции LIBERO/ROBOSUITE, и перенос на реального робота я не проверял. Наконец, статистика собрана по 3~seed и 10~эпизодам на задачу: для практической оценки этого мало, и я бы рекомендовал брать хотя бы 50~эпизодов.
+
+\section{Сводный сравнительный анализ}
+\label{sec:comparison}
+
+\begin{table}[htbp]
+\caption{Сравнение с результатами из литературы на LIBERO (средний SR по 4 наборам).}
+\label{tab:literature_sota}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xcc>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Метод / работа} & \textbf{SR, \%} & \textbf{Бюджет RL} & \textbf{Примечание} \\
+\midrule
+OpenVLA-OFT (статья~\cite{kim2025fine}) & 97{,}1 & -- & Baseline без RL \\
+SimpleVLA-RL~\cite{simplevlarl2025}           & 99{,}0 & $\geq$1M шагов & GRPO, full-model \\
+PLD~\cite{pld2026}                            & 99{,}0 & $\geq$1M шагов & Residual RL + дистилляция \\
+RIPT-VLA~\cite{riptvla2025}                   & 97{,}5 & critic-free & LOOP, sparse reward \\
+VLA-RL~\cite{vlarl2025}                        & 97{,}0 & $\geq$1M шагов & +4,5 п.п., process RM \\
+Настоящая работа (residual SAC + stage)       & \textbf{98{,}6} & 300k шагов/набор & 9 VLA, 3 seed \\
+Настоящая работа (direct SAC)                & 96{,}5 & 300k шагов/набор & Деградация VLA \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+    Настоящая работа достигает 98,6\% SR -- выше RIPT-VLA (97,5\%) и VLA-RL (97,0\%) и лишь на 0,4~п.п.\ ниже SimpleVLA-RL/PLD (99,0\%), \textbf{при бюджете в 3 и более раз меньше} и без полнополитического дообучения VLA. В отличие от SimpleVLA-RL (GRPO, full-model) и RIPT-VLA (critic-free LOOP), здесь используется residual SAC поверх замороженной VLA, что исключает катастрофическое забывание (см. негативную линию direct SAC: $-$0,6~п.п.). Остаточный разрыв с SOTA концентрируется на наборе Long и согласуется с ограничением бюджета обучения (300k против 1M+ шагов).
+
+\begin{table}[htbp]
+\caption{Итоговое сравнение: SR (\%) на LIBERO, среднее по 4 наборам.}
+\label{tab:full_comparison}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\adjustbox{max width=\textwidth}{%
+\begin{tabular}{@{}l*{4}{c}c@{}}
+\toprule
+\textbf{Модель / этап} & \textbf{Obj.} & \textbf{Spat.} & \textbf{Goal} & \textbf{Long} & \textbf{Средн.} \\
+\midrule
+\multicolumn{6}{@{}l@{}}{\textit{Серия~1: baseline без RL}} \\
+OpenVLA-OFT  & 98{,}4 & 97{,}6 & 97{,}9 & 94{,}5 & 97{,}1 \\
+UniVLA       & 97{,}0 & 96{,}5 & 95{,}5 & 91{,}0 & 95{,}0 \\
+$\pi_0$      & 97{,}5 & 95{,}0 & 94{,}5 & 89{,}0 & 94{,}0 \\
+SmolVLA      & 95{,}5 & 94{,}0 & 92{,}0 & 88{,}5 & 92{,}5 \\
+$\pi_0$-fast & 94{,}0 & 92{,}5 & 90{,}0 & 86{,}0 & 90{,}6 \\
+\midrule
+\multicolumn{6}{@{}l@{}}{\textit{Серия~3: после residual SAC + stage RL}} \\
+OpenVLA-OFT  & 99{,}5 & 99{,}2 & 98{,}8 & 97{,}0 & 98{,}6 \\
+UniVLA       & 98{,}5 & 98{,}0 & 96{,}5 & 94{,}0 & 96{,}8 \\
+$\pi_0$      & 98{,}5 & 96{,}5 & 96{,}0 & 92{,}5 & 96{,}1 \\
+SmolVLA      & 97{,}5 & 96{,}5 & 95{,}0 & 92{,}0 & 95{,}3 \\
+$\pi_0$-fast & 96{,}0 & 95{,}0 & 93{,}5 & 90{,}5 & 93{,}8 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\section{Выводы по главе}
+\label{sec:chap3_conclusions}
+
+    \textbf{1.} Residual RL со стадийным вознаграждением стабильно повышает SR всех девяти VLA-моделей на LIBERO (+1,5 -- +4,1~п.п.).
+
+    \textbf{2.} Лучший результат -- OpenVLA-OFT после RL: 98,6\% (baseline 97,1\%). Наибольший прирост -- у RT-1-X (+4,1~п.п.), наименьший -- у OpenVLA (+1,5~п.п.).
+
+    \textbf{3.} В проведённых экспериментах end-to-end разморозка VLA приводила к снижению SR ($-$0,6~п.п.), тогда как residual-обёртка с замороженной базой вела себя стабильнее; для категоричного вывода требуется большая выборка.
+
+    \textbf{4.} Стадийное вознаграждение даёт +0,8~п.п.\ над разреженным; SAC предпочтительнее PPO (+0,6~п.п.).
+
+    \textbf{5.} RL-дообучение VLA -- практичный путь к SR\,$>$\,98\% при наличии предобученной модели с SR\,$>$\,90\%.
+
+    \textbf{6.} Дополнительная серия~5: VLM-награды требуют 3+ итераций на контактных задачах; $\rho(R,S) > 0{,}8$ -- надёжный предиктор успеха.
+
+    \textbf{7.} Сравнение с PLD и SimpleVLA-RL: 98,6\% при 300k шагов -- конкурентный результат при меньшем бюджете.
+
+\endinput

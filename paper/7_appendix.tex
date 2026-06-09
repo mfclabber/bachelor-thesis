@@ -1,0 +1,164 @@
+\chapter*{Приложение А. Параметры экспериментов и структура прототипа}
+\addcontentsline{toc}{chapter}{Приложение А. Параметры экспериментов и структура прототипа}
+\label{app:params}
+
+\section*{А.1. Гиперпараметры residual RL}
+\addcontentsline{toc}{section}{А.1. Гиперпараметры residual RL}
+
+    В таблице~\ref{tab:hyperparams} приведены гиперпараметры SAC и PPO для RL-дообучения VLA на LIBERO.
+
+\begin{table}[htbp]
+\caption{Гиперпараметры RL-дообучения VLA (Stable-Baselines3).}
+\label{tab:hyperparams}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xcc@{}}
+\toprule
+\textbf{Параметр} & \textbf{SAC (residual)} & \textbf{PPO (STARE)} \\
+\midrule
+Скорость обучения $\alpha$       & $3 \times 10^{-4}$ & $3 \times 10^{-4}$ \\
+Размер скрытых слоёв residual   & 256 / 256          & 256 / 256 \\
+Функция активации                & ReLU               & tanh \\
+Размер буфера (SAC)              & $10^6$             & -- \\
+Размер пакета                    & 256                & 2048 \\
+$\tau$ (мягкое обновление SAC)   & 0,005              & -- \\
+$n_{\text{epochs}}$ (PPO)        & --                & 10 \\
+Горизонт эпизода $H$             & \multicolumn{2}{c}{220 шагов (LIBERO)} \\
+Бюджет обучения                  & \multicolumn{2}{c}{300\,000 шагов/набор} \\
+Число seed-ов                    & \multicolumn{2}{c}{3 (7, 13, 42)} \\
+Заморозка VLA                    & полная (SAC)       & последние 2 слоя (PPO) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{А.2. Стадийная функция вознаграждения}
+\addcontentsline{toc}{section}{А.2. Стадийная функция вознаграждения}
+
+    Четыре фазы манипуляции с равными весами $w_k = 0{,}25$:
+\begin{enumerate}
+    \item \textbf{Reach} -- расстояние захвата до объекта $< 0{,}05$~м;
+    \item \textbf{Grasp} -- контакт с объектом и закрытие захвата;
+    \item \textbf{Transport} -- объект перемещён, расстояние до цели $< 0{,}15$~м;
+    \item \textbf{Place} -- успех эпизода $S(T_i) = 1$, бонус $\beta = 1{,}0$.
+\end{enumerate}
+
+\section*{А.3. Протокол оценки VLA на LIBERO}
+\addcontentsline{toc}{section}{А.3. Протокол оценки VLA на LIBERO}
+
+    10 эпизодов/задачу (100 эпизодов/набор); 3 seed среды (7, 13, 42); разрешение 224$\times$224; greedy-инференс. Чекпоинты: OpenVLA-OFT (\texttt{moojink/openvla-7b-oft-finetuned-libero-*}), UniVLA, $\pi_0$ и $\pi_0$-fast (openpi), CogACT, SmolVLA, SpatialVLA, Octo-Small, RT-1-X (симуляционный адаптер).
+
+\section*{А.4. Сводная таблица экспериментальных серий}
+\addcontentsline{toc}{section}{А.4. Сводная таблица экспериментальных серий}
+
+\begin{table}[htbp]
+\caption{Сводная характеристика экспериментальных серий.}
+\label{tab:series_summary}
+\label{tab:last}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}c l l c >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Серия} & \textbf{Среда} & \textbf{Метод} & \textbf{Запуск.} & \textbf{Цель} \\
+\midrule
+1 & LIBERO & VLA-baseline & 27 & Отправная точка SR \\
+2 & LIBERO & RL-схемы (OpenVLA) & 9 & Выбор метода RL \\
+3 & LIBERO & Residual SAC + stage & 27 & RL всех VLA \\
+4 & LIBERO & Абляция & 5 & Вклад компонентов \\
+5 & MetaWorld & VLM-код + SAC & 12 & Альтернатива без VLA \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{А.5. Структура репозитория прототипа}
+\addcontentsline{toc}{section}{А.5. Структура репозитория прототипа}
+
+    Код размещён в репозитории \url{https://github.com/mfclabber/bachelor-thesis}. Основные директории:
+{\footnotesize
+\begin{verbatim}
+bachelor-thesis/
+  configs/             # Hydra: series1_baseline.yaml, ...
+  src/vla_rl/
+    evaluate_vla.py      # инференс 9 VLA на LIBERO
+    residual_rl_train.py # SAC residual-обёртка
+    stage_reward.py      # 4 фазы манипуляции
+    vlm_reward_gen.py    # Qwen2.5-VL (серия 5)
+  scripts/
+    run_series1.sh ... run_series5.sh
+  results/
+    libero/              # CSV SR, чекпоинты, кривые
+    metaworld/           # логи, reward_code/
+\end{verbatim}
+}
+
+\section*{А.6. Параметры VLM-кодогенерации (серия~5)}
+\addcontentsline{toc}{section}{А.6. Параметры VLM-кодогенерации}
+
+    Модель Qwen2.5-VL-7B-Instruct (vLLM), температура 0,7, до 2048 токенов, 1--3 итерации рефлексии. Промпт: название задачи MetaWorld, семантика наблюдений, обратная связь (SR, $\rho(R,S)$, описание поведения). Пример эволюции кода награды для push-v3:
+
+    \textit{Итерация~1} (SR\,=\,48,3\%, $\rho = 0{,}12$):
+{\footnotesize
+\begin{verbatim}
+def compute_dense_reward(self, action, obs):
+    ee = obs["achieved_goal"][:3]
+    obj = obs["observation"][:3]
+    return -np.linalg.norm(ee - obj)
+\end{verbatim}
+}
+
+    \textit{Итерация~3} (SR\,=\,85,0\%, $\rho = 0{,}81$):
+{\footnotesize
+\begin{verbatim}
+def compute_dense_reward(self, action, obs):
+    ee = obs["achieved_goal"][:3]
+    obj = obs["observation"][:3]
+    goal = obs["desired_goal"][:3]
+    dist = np.linalg.norm(ee - obj)
+    contact = 1.0 if abs(ee[2] - obj[2]) < 0.02 else 0.0
+    d_now = np.linalg.norm(obj - goal)
+    progress = self._prev_dist - d_now
+    self._prev_dist = d_now
+    return -dist + 0.5 * contact + 2.0 * progress
+\end{verbatim}
+}
+
+\section*{А.7. Расчёт 95\% доверительного интервала}
+\addcontentsline{toc}{section}{А.7. Расчёт 95\% доверительного интервала}
+
+    Для каждой конфигурации (модель $\times$ набор LIBERO) SR усредняется по 10 задачам и 3 seed среды. 95\% ДИ вычисляется по $t$-распределению Стьюдента с $n-1 = 2$ степенями свободы:
+\begin{equation*}
+    \text{ДИ}_{95\%} = \bar{x} \pm t_{0{,}975,\,2} \cdot \frac{s}{\sqrt{n}}, \quad t_{0{,}975,\,2} \approx 4{,}303.
+\end{equation*}
+    Например, для OpenVLA после RL по трём seed: $\bar{x} = 98{,}6\%$, выборочное стандартное отклонение $s = 0{,}12\%$, $n = 3$. Тогда стандартная ошибка среднего $s/\sqrt{n} = 0{,}12/\sqrt{3} = 0{,}069\%$, а половина ширины интервала
+\begin{equation*}
+    t_{0{,}975,\,2}\cdot \frac{s}{\sqrt{n}} = 4{,}303 \cdot 0{,}069 = 0{,}30\%,
+\end{equation*}
+    откуда ДИ $= 98{,}6 \pm 0{,}3\%$. Для моделей с большим разбросом по seed (например, RT-1-X, $s \approx 0{,}32\%$) тем же способом получается более широкий интервал $\pm 0{,}8\%$.
+
+\section*{А.8. Структура residual RL (псевдокод)}
+\addcontentsline{toc}{section}{А.8. Структура residual RL}
+
+{\footnotesize
+\begin{verbatim}
+# Residual RL training loop (OpenVLA + SAC)
+vla = load_vla("openvla-7b-oft-libero").eval()  # frozen
+residual = SAC("MlpPolicy", env, policy_kwargs=256x256)
+
+obs, instruction = env.reset()              # reset once at start
+for step in range(300_000):
+    a_vla = vla.predict(obs, instruction)   # no grad
+    delta = residual.predict(obs_embed)     # trainable
+    action = a_vla + delta
+    next_obs, reward, done = env.step(action)
+    reward = stage_reward(next_obs, phase)  # 4 phases
+    residual.replay_buffer.add(obs, action, reward, next_obs, done)
+    obs = next_obs
+    if done:                                # reset only at episode end
+        obs, instruction = env.reset()
+\end{verbatim}
+}
+
+\endinput
